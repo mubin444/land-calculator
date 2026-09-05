@@ -27,31 +27,55 @@ class CenteredTextInput(TextInput):
         self.foreground_color = (0.1, 0.1, 0.3, 1)
         self.cursor_color = (0.1, 0.5, 0.9, 1)
         self.padding = [10, 10, 10, 0]
-        self.bind(size=self._update_padding)
+        self.bind(size=self._update_padding, line_height=self._update_padding)
 
     def _update_padding(self, *args):
-        try:
-            line_h = getattr(self, 'line_height', 20)
-            pad_y = max((self.height - line_h) / 2, 5)
-            self.padding = [10, pad_y, 10, 0]
-        except Exception:
-            self.padding = [10, 10, 10, 0]
+        lh = self.line_height if self.line_height > 0 else 20
+        pad_top = max(0, (self.height - lh) / 2)
+        self.padding = [10, pad_top, 10, 0]
 
 
-class AdvancedLandVisualizer(Widget):
+class Interactive3DLandVisualizer(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.bind(pos=self.update_canvas, size=self.update_canvas)
-        self.n = 0.0
-        self.s = 0.0
-        self.e = 0.0
-        self.w = 0.0
+        self.n, self.s, self.e, self.w = 0.0, 0.0, 0.0, 0.0
         self.cut_frac = [0.0, 0.0]
         self.direction = "From North"
         self.diag_choice = "Diagonal 1 (NE to SW)"
         self.angles = {}
         self.part_diag_pts = None
         self.part_diag_len = 0.0
+        self.rot_angle = 0.0
+        self.last_touch_x = 0
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self.last_touch_x = touch.x
+            return True
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self.collide_point(*touch.pos):
+            dx = touch.x - self.last_touch_x
+            self.rot_angle += dx * 0.5
+            self.last_touch_x = touch.x
+            self.update_canvas()
+            return True
+        return super().on_touch_move(touch)
+
+    def reset_rotation(self):
+        self.rot_angle = 0.0
+        self.update_canvas()
+
+    def _rotate_pt(self, pt, center, angle_deg):
+        rad = math.radians(angle_deg)
+        cos_a, sin_a = math.cos(rad), math.sin(rad)
+        cx, cy = center
+        px, py = pt[0] - cx, pt[1] - cy
+        rx = px * cos_a - py * sin_a
+        ry = px * sin_a + py * cos_a
+        return (rx + cx, ry + cy)
 
     def draw_land(self, n, s, e, w, cut_frac, direction, diag_choice, angles, part_diag_pts=None, part_diag_len=0.0):
         self.n, self.s, self.e, self.w = n, s, e, w
@@ -78,15 +102,21 @@ class AdvancedLandVisualizer(Widget):
                 return
 
             cx, cy = self.x + cw / 2, self.y + ch / 2
-            scale = (min(cw, ch) * 0.85) / max_dim
+            center = (cx, cy)
+            scale = (min(cw, ch) * 0.7) / max_dim
 
             hw_n, hw_s = (self.n * scale) / 2, (self.s * scale) / 2
             hh_w, hh_e = (self.w * scale) / 2, (self.e * scale) / 2
 
-            nw = (cx - hw_n, cy + hh_w)
-            ne = (cx + hw_n, cy + hh_e)
-            se = (cx + hw_s, cy - hh_e)
-            sw = (cx - hw_s, cy - hh_w)
+            raw_nw = (cx - hw_n, cy + hh_w)
+            raw_ne = (cx + hw_n, cy + hh_e)
+            raw_se = (cx + hw_s, cy - hh_e)
+            raw_sw = (cx - hw_s, cy - hh_w)
+
+            nw = self._rotate_pt(raw_nw, center, self.rot_angle)
+            ne = self._rotate_pt(raw_ne, center, self.rot_angle)
+            se = self._rotate_pt(raw_se, center, self.rot_angle)
+            sw = self._rotate_pt(raw_sw, center, self.rot_angle)
 
             Color(0.2, 0.8, 1, 1)
             Line(points=[nw[0], nw[1], ne[0], ne[1], se[0], se[1], sw[0], sw[1], nw[0], nw[1]], width=2.5)
@@ -100,26 +130,31 @@ class AdvancedLandVisualizer(Widget):
             self._render_angle_labels(nw, ne, se, sw)
 
             Color(1, 0.3, 0.3, 1)
-            p1, p2 = (0, 0), (0, 0)
-
+            f1, f2 = self.cut_frac[0], self.cut_frac[1]
+            
             if self.direction == "From North":
-                p1 = (nw[0] + (sw[0] - nw[0]) * self.cut_frac[0], nw[1] + (sw[1] - nw[1]) * self.cut_frac[0])
-                p2 = (ne[0] + (se[0] - ne[0]) * self.cut_frac[1], ne[1] + (se[1] - ne[1]) * self.cut_frac[1])
+                raw_p1 = (raw_nw[0] + (raw_sw[0] - raw_nw[0]) * f1, raw_nw[1] + (raw_sw[1] - raw_nw[1]) * f1)
+                raw_p2 = (raw_ne[0] + (raw_se[0] - raw_ne[0]) * f2, raw_ne[1] + (raw_se[1] - raw_ne[1]) * f2)
             elif self.direction == "From South":
-                p1 = (sw[0] + (nw[0] - sw[0]) * self.cut_frac[0], sw[1] + (nw[1] - sw[1]) * self.cut_frac[0])
-                p2 = (se[0] + (ne[0] - se[0]) * self.cut_frac[1], se[1] + (ne[1] - se[1]) * self.cut_frac[1])
+                raw_p1 = (raw_sw[0] + (raw_nw[0] - raw_sw[0]) * f1, raw_sw[1] + (raw_nw[1] - raw_sw[1]) * f1)
+                raw_p2 = (raw_se[0] + (raw_ne[0] - raw_se[0]) * f2, raw_se[1] + (raw_ne[1] - raw_se[1]) * f2)
             elif self.direction == "From East":
-                p1 = (ne[0] + (nw[0] - ne[0]) * self.cut_frac[0], ne[1] + (nw[1] - ne[1]) * self.cut_frac[0])
-                p2 = (se[0] + (sw[0] - se[0]) * self.cut_frac[1], se[1] + (sw[1] - se[1]) * self.cut_frac[1])
+                raw_p1 = (raw_ne[0] + (raw_nw[0] - raw_ne[0]) * f1, raw_ne[1] + (raw_nw[1] - raw_ne[1]) * f1)
+                raw_p2 = (raw_se[0] + (raw_sw[0] - raw_se[0]) * f2, raw_se[1] + (raw_sw[1] - raw_se[1]) * f2)
             elif self.direction == "From West":
-                p1 = (nw[0] + (ne[0] - nw[0]) * self.cut_frac[0], nw[1] + (ne[1] - nw[1]) * self.cut_frac[0])
-                p2 = (sw[0] + (se[0] - sw[0]) * self.cut_frac[1], sw[1] + (se[1] - sw[1]) * self.cut_frac[1])
+                raw_p1 = (raw_nw[0] + (raw_ne[0] - raw_nw[0]) * f1, raw_nw[1] + (raw_ne[1] - raw_nw[1]) * f1)
+                raw_p2 = (raw_sw[0] + (raw_se[0] - raw_sw[0]) * f2, raw_sw[1] + (raw_se[1] - raw_sw[1]) * f2)
+
+            p1 = self._rotate_pt(raw_p1, center, self.rot_angle)
+            p2 = self._rotate_pt(raw_p2, center, self.rot_angle)
 
             Line(points=[p1[0], p1[1], p2[0], p2[1]], width=3)
 
             if self.part_diag_pts and self.part_diag_len > 0:
-                dp1, dp2 = self.part_diag_pts
-                
+                raw_dp1, raw_dp2 = self.part_diag_pts
+                dp1 = self._rotate_pt(raw_dp1, center, self.rot_angle)
+                dp2 = self._rotate_pt(raw_dp2, center, self.rot_angle)
+
                 Color(1, 0.55, 0, 0.9)
                 Line(points=[dp1[0], dp1[1], dp2[0], dp2[1]], width=2, dash_length=4, dash_offset=2)
 
@@ -131,12 +166,17 @@ class AdvancedLandVisualizer(Widget):
                 core_label.refresh()
                 texture = core_label.texture
 
-                if texture:
-                    Color(0, 0, 0, 0.8)
-                    Rectangle(pos=(mid_x - texture.width / 2 - 4, mid_y - texture.height / 2 - 2),
-                              size=(texture.width + 8, texture.height + 4))
-                    Color(1, 0.8, 0.2, 1)
-                    Rectangle(texture=texture, pos=(mid_x - texture.width / 2, mid_y - texture.height / 2), size=texture.size)
+                Color(0, 0, 0, 0.8)
+                Rectangle(pos=(mid_x - texture.width / 2 - 4, mid_y - texture.height / 2 - 2),
+                          size=(texture.width + 8, texture.height + 4))
+                Color(1, 0.8, 0.2, 1)
+                Rectangle(texture=texture, pos=(mid_x - texture.width / 2, mid_y - texture.height / 2), size=texture.size)
+
+            core_lbl = CoreLabel(text="[Touch & Drag to Rotate Diagram]", font_size=11, bold=True)
+            core_lbl.refresh()
+            tex = core_lbl.texture
+            Color(0.1, 0.9, 0.9, 0.8)
+            Rectangle(texture=tex, pos=(self.x + 10, self.y + 10), size=tex.size)
 
     def _render_angle_labels(self, nw, ne, se, sw):
         if not self.angles:
@@ -149,8 +189,6 @@ class AdvancedLandVisualizer(Widget):
             core_lbl = CoreLabel(text=txt, font_size=11, bold=True)
             core_lbl.refresh()
             tex = core_lbl.texture
-            if not tex:
-                continue
             
             offset_x = -35 if "W" in corner else 5
             offset_y = 10 if "N" in corner else -20
@@ -182,29 +220,29 @@ class AdvancedLandCalculatorApp(App):
         grid = GridLayout(cols=2, spacing=10, row_default_height=42, size_hint_y=None, height=310)
 
         grid.add_widget(Label(text="North Side (ft):", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
-        self.north_in = CenteredTextInput(text="60")
+        self.north_in = CenteredTextInput(text="165")
         grid.add_widget(self.north_in)
 
         grid.add_widget(Label(text="South Side (ft):", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
-        self.south_in = CenteredTextInput(text="70")
+        self.south_in = CenteredTextInput(text="122")
         grid.add_widget(self.south_in)
 
         grid.add_widget(Label(text="East Side (ft):", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
-        self.east_in = CenteredTextInput(text="40")
+        self.east_in = CenteredTextInput(text="97")
         grid.add_widget(self.east_in)
 
         grid.add_widget(Label(text="West Side (ft):", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
-        self.west_in = CenteredTextInput(text="50")
+        self.west_in = CenteredTextInput(text="96")
         grid.add_widget(self.west_in)
 
         grid.add_widget(Label(text="Diagonal (Karna) (ft):", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
-        self.diag_in = CenteredTextInput(text="65")
+        self.diag_in = CenteredTextInput(text="172.9")
         grid.add_widget(self.diag_in)
 
         grid.add_widget(Label(text="Select Diagonal:", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
         
         self.diag_spinner = Spinner(
-            text="Diagonal 1 (NE to SW)", 
+            text="Diagonal 2 (NW to SE)", 
             values=("Diagonal 1 (NE to SW)", "Diagonal 2 (NW to SE)"), 
             font_size="14sp", 
             size_hint_y=None, 
@@ -221,12 +259,12 @@ class AdvancedLandCalculatorApp(App):
         part_grid = GridLayout(cols=2, spacing=10, row_default_height=42, size_hint_y=None, height=150)
         
         part_grid.add_widget(Label(text="Target Land (Shotok):", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
-        self.target_shotok_in = CenteredTextInput(text="5")
+        self.target_shotok_in = CenteredTextInput(text="6")
         part_grid.add_widget(self.target_shotok_in)
 
         part_grid.add_widget(Label(text="Cut Direction:", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1)))
         self.direction_spinner = Spinner(
-            text="From North", 
+            text="From East", 
             values=("From North", "From South", "From East", "From West"), 
             font_size="15sp", 
             size_hint_y=None, 
@@ -295,14 +333,27 @@ class AdvancedLandCalculatorApp(App):
         self.cut2_label = Label(text="Cut Side 2 (ft):", font_size="15sp", bold=True, color=(0.9, 0.9, 0.9, 1))
         adjust_grid.add_widget(self.cut2_label)
         self.cut2_in = CenteredTextInput(text="")
-        self.cut2_in.bind(text=self.on_cut2_change)
         adjust_grid.add_widget(self.cut2_in)
 
         content.add_widget(adjust_grid)
 
-        diagram_box = BoxLayout(orientation='vertical', size_hint_y=None, height=380)
-        self.visualizer = AdvancedLandVisualizer(size_hint=(1, 1))
+        diagram_box = BoxLayout(orientation='vertical', spacing=5, size_hint_y=None, height=420)
+        self.visualizer = Interactive3DLandVisualizer(size_hint=(1, 1))
         diagram_box.add_widget(self.visualizer)
+
+        reset_rot_btn = Button(
+            text="Reset Diagram View Angle",
+            font_size="14sp",
+            bold=True,
+            size_hint_y=None,
+            height=35,
+            background_normal='',
+            background_color=(0.2, 0.5, 0.8, 1),
+            color=(1, 1, 1, 1)
+        )
+        reset_rot_btn.bind(on_press=lambda x: self.visualizer.reset_rotation())
+        diagram_box.add_widget(reset_rot_btn)
+
         content.add_widget(diagram_box)
 
         self.result_label = Label(text="Enter values and click Calculate...", markup=True, font_size="15sp", size_hint_y=None, halign="left", valign="top")
@@ -369,6 +420,7 @@ class AdvancedLandCalculatorApp(App):
         self.cut2_in.text = ""
 
         self.result_label.text = "Enter values and click Calculate..."
+        self.visualizer.reset_rotation()
         self.visualizer.draw_land(0, 0, 0, 0, [0, 0], "From North", "Diagonal 1 (NE to SW)", {})
         self.updating_internally = False
 
@@ -433,20 +485,14 @@ class AdvancedLandCalculatorApp(App):
         s = (a + b + c) / 2
         if s <= a or s <= b or s <= c:
             return 0.0
-        try:
-            return math.sqrt(s * (s - a) * (s - b) * (s - c))
-        except ValueError:
-            return 0.0
+        return math.sqrt(s * (s - a) * (s - b) * (s - c))
 
     def triangle_angle(self, a, b, c):
         if a <= 0 or b <= 0:
             return 0.0
-        try:
-            cos_val = (a**2 + b**2 - c**2) / (2 * a * b)
-            cos_val = max(-1.0, min(1.0, cos_val))
-            return math.degrees(math.acos(cos_val))
-        except ValueError:
-            return 0.0
+        cos_val = (a**2 + b**2 - c**2) / (2 * a * b)
+        cos_val = max(-1.0, min(1.0, cos_val))
+        return math.degrees(math.acos(cos_val))
 
     def quad_area(self, p1, p2, p3, p4):
         return 0.5 * abs(p1[0]*(p2[1]-p4[1]) + p2[0]*(p3[1]-p1[1]) + p3[0]*(p4[1]-p2[1]) + p4[0]*(p1[1]-p3[1]))
@@ -478,11 +524,12 @@ class AdvancedLandCalculatorApp(App):
             ang_SW = self.triangle_angle(s, w, d)
 
             rad_NW = math.radians(ang_NW1)
+            rad_NE = math.radians(ang_NE)
 
             nw = (0.0, 0.0)
             ne = (n, 0.0)
+            se = (n - e * math.cos(rad_NE), -e * math.sin(rad_NE))
             sw = (-w * math.cos(rad_NW), -w * math.sin(rad_NW))
-            se = (sw[0] + s, sw[1])
 
             angles['NW'] = ang_NW1
             angles['NE'] = ang_NE
@@ -493,27 +540,29 @@ class AdvancedLandCalculatorApp(App):
 
     def compute_exact_c2(self, c1, target_sqft):
         try:
-            n = float(self.north_in.text or 0)
-            s = float(self.south_in.text or 0)
-            e = float(self.east_in.text or 0)
-            w = float(self.west_in.text or 0)
-            d = float(self.diag_in.text or 0)
+            n = float(self.north_in.text)
+            s = float(self.south_in.text)
+            e = float(self.east_in.text)
+            w = float(self.west_in.text)
+            d = float(self.diag_in.text)
             direction = self.direction_spinner.text
             diag_choice = self.diag_spinner.text
         except ValueError:
-            return 0.0
+            return None
 
         nw, ne, se, sw, _ = self.get_quad_points_and_angles(n, s, e, w, d, diag_choice)
-        low, high = 0.0, (e if direction in ["From North", "From South"] else s)
+        
+        limit_c1 = w if direction in ["From North", "From South"] else n
+        limit_c2 = e if direction in ["From North", "From South"] else s
+
+        f1 = min(max(c1 / limit_c1, 0.0), 1.0) if limit_c1 > 0 else 0.0
+
+        low, high = 0.0, limit_c2
         best_c2 = 0.0
 
         for _ in range(40):
             mid = (low + high) / 2
-            f1 = (c1 / w) if (direction in ["From North", "From South"] and w > 0) else ((c1 / n) if n > 0 else 0)
-            f2 = (mid / e) if (direction in ["From North", "From South"] and e > 0) else ((mid / s) if s > 0 else 0)
-
-            f1 = min(max(f1, 0.0), 1.0)
-            f2 = min(max(f2, 0.0), 1.0)
+            f2 = min(max(mid / limit_c2, 0.0), 1.0) if limit_c2 > 0 else 0.0
 
             if direction == "From North":
                 p1 = (nw[0] + (sw[0]-nw[0])*f1, nw[1] + (sw[1]-nw[1])*f1)
@@ -588,18 +637,20 @@ class AdvancedLandCalculatorApp(App):
                 return
 
             area_ratio = target_sqft / total_sqft
-            scale_factor = math.sqrt(area_ratio)
 
             if direction in ["From North", "From South"]:
                 self.cut1_label.text = "Cut West Side (ft):"
                 self.cut2_label.text = "Cut East Side (ft):"
-                c1_init = w * scale_factor
+                c1_init = w * area_ratio
             else:
                 self.cut1_label.text = "Cut North Side (ft):"
                 self.cut2_label.text = "Cut South Side (ft):"
-                c1_init = n * scale_factor
+                c1_init = n * area_ratio
 
             c2_exact = self.compute_exact_c2(c1_init, target_sqft)
+
+            if c2_exact is None:
+                c2_exact = 0.0
 
             self.updating_internally = True
             self.cut1_in.text = f"{c1_init:.2f}"
@@ -616,27 +667,37 @@ class AdvancedLandCalculatorApp(App):
             return
         try:
             c1 = float(value)
-            target_sqft = float(self.target_shotok_in.text or 0) * 435.6
+            direction = self.direction_spinner.text
+            
+            n = float(self.north_in.text)
+            w = float(self.west_in.text)
+
+            max_allowed = w if direction in ["From North", "From South"] else n
+            side_name = "West Side Boundary" if direction in ["From North", "From South"] else "North Side Boundary"
+
+            if c1 > max_allowed or c1 < 0:
+                self.updating_internally = True
+                self.cut2_in.text = "Invalid"
+                self.updating_internally = False
+
+                err_msg = f"[color=ff4d4d][b]Error: Cut Side 1 exceeds main boundary![/b]\n"
+                err_msg += f"• Entered Value: [color=ffaa00]{c1:.2f} ft[/color]\n"
+                err_msg += f"• Referenced {side_name}: [color=00ff66]{max_allowed:.2f} ft[/color]\n"
+                err_msg += f"Please enter a value between 0.00 ft and {max_allowed:.2f} ft.[/color]"
+                self.result_label.text = err_msg
+                return
+
+            target_sqft = float(self.target_shotok_in.text) * 435.6
             c2 = self.compute_exact_c2(c1, target_sqft)
+
+            if c2 is None:
+                self.updating_internally = True
+                self.cut2_in.text = "Error"
+                self.updating_internally = False
+                return
 
             self.updating_internally = True
             self.cut2_in.text = f"{c2:.2f}"
-            self.updating_internally = False
-
-            self.update_results(c1, c2)
-        except ValueError:
-            pass
-
-    def on_cut2_change(self, instance, value):
-        if self.updating_internally or not value or not self.has_calculated:
-            return
-        try:
-            c2 = float(value)
-            target_sqft = float(self.target_shotok_in.text or 0) * 435.6
-            c1 = self.compute_exact_c2(c2, target_sqft)
-
-            self.updating_internally = True
-            self.cut1_in.text = f"{c1:.2f}"
             self.updating_internally = False
 
             self.update_results(c1, c2)
@@ -735,7 +796,7 @@ class AdvancedLandCalculatorApp(App):
 
             res = f"[color=00e5ff][b]=== Precision Land Report ===[/b][/color]\n"
             res += f"Total Area: {total_sqft:.2f} Sq.Ft ([color=00ffff]{total_shotok:.3f} Shotok[/color])\n"
-            res += f"Calculated Angles: NW: {angles.get('NW',0):.1f}°, NE: {angles.get('NE',0):.1f}°, SE: {angles.get('SE',0):.1f}°, SE: {angles.get('SE',0):.1f}°, SW: {angles.get('SW',0):.1f}°\n"
+            res += f"Calculated Angles: NW: {angles.get('NW',0):.1f}°, NE: {angles.get('NE',0):.1f}°, SE: {angles.get('SE',0):.1f}°, SW: {angles.get('SW',0):.1f}°\n"
             res += f"Separated Target Area: [color=00ff66]{sep_shotok:.3f} Shotok ({sep_sqft:.2f} Sq.Ft)[/color]\n\n"
             res += f"[color=ffb703][b]Partition Boundary Measures ({direction}):[/b][/color]\n"
             res += f"• Main Base Line: {base_len:.2f} ft\n"
