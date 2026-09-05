@@ -32,7 +32,7 @@ jobs:
     - name: Install Python Dependencies
       run: |
         pip install --upgrade pip setuptools
-        pip install buildozer cython
+        pip install "cython<3.0.0" buildozer
 
     - name: Build with Buildozer
       run: |
