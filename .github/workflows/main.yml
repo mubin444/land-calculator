@@ -7,14 +7,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Set up Java JDK 17
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         distribution: 'zulu'
         java-version: '17'
@@ -29,6 +29,11 @@ jobs:
         sudo apt update
         sudo apt install -y build-essential git ffmpeg libffi-dev libssl-dev libxml2-dev libxslt1-dev zlib1g-dev python3-pip ccache zip unzip openjdk-17-jdk
 
+    - name: Auto Accept Android SDK Licenses
+      run: |
+        mkdir -p ~/.android
+        touch ~/.android/repositories.cfg
+
     - name: Install Python Dependencies
       run: |
         pip install --upgrade pip setuptools
@@ -36,7 +41,7 @@ jobs:
 
     - name: Build with Buildozer
       run: |
-        yes | buildozer -v android debug
+        yes y | buildozer -v android debug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
